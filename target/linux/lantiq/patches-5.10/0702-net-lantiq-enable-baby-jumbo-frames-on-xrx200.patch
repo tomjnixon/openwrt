@@ -1,0 +1,99 @@
+From 7c481d31cbe49704b6326ea46ba84c2be2c61d95 Mon Sep 17 00:00:00 2001
+From: Thomas Nixon <tom@tomn.co.uk>
+Date: Sat, 3 Jul 2021 15:57:03 +0100
+Subject: [PATCH] net: lantiq: enable baby jumbo frames on xrx200
+
+xrx200 MTU is reduced so that the maximum mtu setting works correctly.
+
+The maximum packet size accepted by the switch is increased to match the
+maximum mtu.
+
+Signed-off-by: Thomas Nixon <tom@tomn.co.uk>
+---
+ drivers/net/dsa/lantiq_gswip.c       | 26 +++++++++++++++++++++++---
+ drivers/net/ethernet/lantiq_xrx200.c |  4 +++-
+ 2 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/dsa/lantiq_gswip.c b/drivers/net/dsa/lantiq_gswip.c
+index 93c7fa1fd4cb..da127d6b535b 100644
+--- a/drivers/net/dsa/lantiq_gswip.c
++++ b/drivers/net/dsa/lantiq_gswip.c
+@@ -238,6 +238,9 @@
+ 
+ #define XRX200_GPHY_FW_ALIGN	(16 * 1024)
+ 
++/* max mtu including tag size */
++#define GSWIP_MAX_MTU	(1508 + 8)
++
+ struct gswip_hw_info {
+ 	int max_ports;
+ 	int cpu_port;
+@@ -851,9 +854,14 @@ static int gswip_setup(struct dsa_switch *ds)
+ 	gswip_switch_mask(priv, 0, GSWIP_PCE_PCTRL_0_INGRESS,
+ 			  GSWIP_PCE_PCTRL_0p(cpu_port));
+ 
+-	gswip_switch_mask(priv, 0, GSWIP_MAC_CTRL_2_MLEN,
+-			  GSWIP_MAC_CTRL_2p(cpu_port));
+-	gswip_switch_w(priv, VLAN_ETH_FRAME_LEN + 8, GSWIP_MAC_FLEN);
++	/* enable max mtu on all ports */
++	for (i = 0; i < priv->hw_info->max_ports; i++)
++		gswip_switch_mask(priv, 0, GSWIP_MAC_CTRL_2_MLEN,
++				  GSWIP_MAC_CTRL_2p(i));
++	/* includes header, special tag, and FCS */
++	gswip_switch_w(priv, VLAN_ETH_HLEN + GSWIP_MAX_MTU + ETH_FCS_LEN,
++		       GSWIP_MAC_FLEN);
++
+ 	gswip_switch_mask(priv, 0, GSWIP_BM_QUEUE_GCTRL_GL_MOD,
+ 			  GSWIP_BM_QUEUE_GCTRL);
+ 
+@@ -1426,6 +1434,16 @@ static int gswip_port_fdb_dump(struct dsa_switch *ds, int port,
+ 	return 0;
+ }
+ 
++static int gswip_port_max_mtu(struct dsa_switch *ds, int port)
++{
++	return GSWIP_MAX_MTU;
++}
++
++static int gswip_port_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
++{
++	return 0;
++}
++
+ static void gswip_phylink_validate(struct dsa_switch *ds, int port,
+ 				   unsigned long *supported,
+ 				   struct phylink_link_state *state)
+@@ -1769,6 +1787,8 @@ static const struct dsa_switch_ops gswip_switch_ops = {
+ 	.port_fdb_add		= gswip_port_fdb_add,
+ 	.port_fdb_del		= gswip_port_fdb_del,
+ 	.port_fdb_dump		= gswip_port_fdb_dump,
++	.port_change_mtu	= gswip_port_change_mtu,
++	.port_max_mtu		= gswip_port_max_mtu,
+ 	.phylink_validate	= gswip_phylink_validate,
+ 	.phylink_mac_config	= gswip_phylink_mac_config,
+ 	.phylink_mac_link_down	= gswip_phylink_mac_link_down,
+diff --git a/drivers/net/ethernet/lantiq_xrx200.c b/drivers/net/ethernet/lantiq_xrx200.c
+index 072075bc60ee..c39ebb55b373 100644
+--- a/drivers/net/ethernet/lantiq_xrx200.c
++++ b/drivers/net/ethernet/lantiq_xrx200.c
+@@ -14,6 +14,8 @@
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ 
++#include <linux/if_vlan.h>
++
+ #include <linux/of_net.h>
+ #include <linux/of_platform.h>
+ 
+@@ -455,7 +457,7 @@ static int xrx200_probe(struct platform_device *pdev)
+ 	net_dev->netdev_ops = &xrx200_netdev_ops;
+ 	SET_NETDEV_DEV(net_dev, dev);
+ 	net_dev->min_mtu = ETH_ZLEN;
+-	net_dev->max_mtu = XRX200_DMA_DATA_LEN;
++	net_dev->max_mtu = XRX200_DMA_DATA_LEN - VLAN_ETH_HLEN - NET_IP_ALIGN;
+ 
+ 	/* load the memory ranges */
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-- 
+2.29.3
+
